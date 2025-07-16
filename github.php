@@ -4,16 +4,19 @@ $githubClientID = '';
 $githubClientSecret = '';
 
 // This is the URL we'll send the user to first to get their authorization
-$authorizeURL = 'https://github.com/login/oauth/authorize';
+$authorizationEndpoint = 'https://github.com/login/oauth/authorize';
 
 // This is the endpoint our server will request an access token from
-$tokenURL = 'https://github.com/login/oauth/access_token';
+$tokenEndpoint = 'https://github.com/login/oauth/access_token';
 
 // This is the Github base URL we can use to make authenticated API requests
 $apiURLBase = 'https://api.github.com/';
 
 // The URL for this script, used as the redirect URL
-$baseURL = 'https://' . $_SERVER['SERVER_NAME'] . $_SERVER['PHP_SELF'];
+// If PHP isn't setting these right you can put the full URL here manually
+$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
+$redirectURL = $protocol . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['PHP_SELF'];
+
 
 // Start a session so we have a place to store things between redirects
 session_start();
@@ -26,24 +29,28 @@ if(isset($_GET['action']) && $_GET['action'] == 'login') {
 
   // Generate a random hash and store in the session
   $_SESSION['state'] = bin2hex(random_bytes(16));
+  $_SESSION['code_verifier'] = bin2hex(random_bytes(64));
+  $code_challenge = pkce_challenge($_SESSION['code_verifier']);
 
   $params = array(
     'response_type' => 'code',
     'client_id' => $githubClientID,
-    'redirect_uri' => $baseURL,
+    'redirect_uri' => $redirectURL,
     'scope' => 'user public_repo',
-    'state' => $_SESSION['state']
+    'state' => $_SESSION['state'],
+    'code_challenge' => $code_challenge,
+    'code_challenge_method' => 'S256',
   );
 
   // Redirect the user to Github's authorization page
-  header('Location: '.$authorizeURL.'?'.http_build_query($params));
+  header('Location: '.$authorizationEndpoint.'?'.http_build_query($params));
   die();
 }
 
 
 if(isset($_GET['action']) && $_GET['action'] == 'logout') {
   unset($_SESSION['access_token']);
-  header('Location: '.$baseURL);
+  header('Location: '.$redirectURL);
   die();
 }
 
@@ -54,21 +61,22 @@ if(isset($_GET['code'])) {
   if(!isset($_GET['state'])
     || $_SESSION['state'] != $_GET['state']) {
 
-    header('Location: ' . $baseURL . '?error=invalid_state');
+    header('Location: ' . $redirectURL . '?error=invalid_state');
     die();
   }
 
   // Exchange the auth code for an access token
-  $token = apiRequest($tokenURL, array(
+  $token = apiRequest($tokenEndpoint, array(
     'grant_type' => 'authorization_code',
     'client_id' => $githubClientID,
     'client_secret' => $githubClientSecret,
-    'redirect_uri' => $baseURL,
-    'code' => $_GET['code']
+    'redirect_uri' => $redirectURL,
+    'code' => $_GET['code'],
+    'code_verifier' => $_SESSION['code_verifier'],
   ));
   $_SESSION['access_token'] = $token['access_token'];
 
-  header('Location: ' . $baseURL);
+  header('Location: ' . $redirectURL);
   die();
 }
 
@@ -124,4 +132,17 @@ function apiRequest($url, $post=FALSE, $headers=array()) {
 
   $response = curl_exec($ch);
   return json_decode($response, true);
+}
+
+// This function generates a base64-url-encoded version of 
+// the sha256 hash of the input. This is used to generate the
+// PKCE challenge from the PKCE code verifier.
+function pkce_challenge($plain) {
+  return base64_urlencode(hash('sha256', $plain, true));
+}
+
+// Base64-urlencoding is a simple variation on base64-encoding
+// Instead of +/ we use -_, and the trailing = are removed.
+function base64_urlencode($string) {
+  return rtrim(strtr(base64_encode($string), '+/', '-_'), '=');
 }
