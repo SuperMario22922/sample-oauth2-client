@@ -4,13 +4,15 @@ $googleClientID = '';
 $googleClientSecret = '';
 
 // This is the URL we'll send the user to first to get their authorization
-$authorizeURL = 'https://accounts.google.com/o/oauth2/v2/auth';
+$authorizationEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
 
 // This is Google's OpenID Connect token endpoint
-$tokenURL = 'https://www.googleapis.com/oauth2/v4/token';
+$tokenEndpoint = 'https://www.googleapis.com/oauth2/v4/token';
 
 // The URL for this script, used as the redirect URL
-$baseURL = 'https://' . $_SERVER['SERVER_NAME'] . $_SERVER['PHP_SELF'];
+// If PHP isn't setting these right you can put the full URL here manually
+$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
+$redirectURL = $protocol . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['PHP_SELF'];
 
 // Start a session so we have a place to store things between redirects
 session_start();
@@ -28,19 +30,19 @@ if(isset($_GET['action']) && $_GET['action'] == 'login') {
   $params = array(
     'response_type' => 'code',
     'client_id' => $googleClientID,
-    'redirect_uri' => $baseURL,
+    'redirect_uri' => $redirectURL,
     'scope' => 'openid email',
     'state' => $_SESSION['state']
   );
 
   // Redirect the user to Google's authorization page
-  header('Location: ' . $authorizeURL . '?' . http_build_query($params));
+  header('Location: ' . $authorizationEndpoint . '?' . http_build_query($params));
   die();
 }
 
 if(isset($_GET['action']) && $_GET['action'] == 'logout') {
   unset($_SESSION['user_id']);
-  header('Location: '.$baseURL);
+  header('Location: '.$redirectURL);
   die();
 }
 
@@ -49,18 +51,18 @@ if(isset($_GET['action']) && $_GET['action'] == 'logout') {
 if(isset($_GET['code'])) {
   // Verify the state matches our stored state
   if(!isset($_GET['state']) || $_SESSION['state'] != $_GET['state']) {
-    header('Location: ' . $baseURL . '?error=invalid_state');
+    header('Location: ' . $redirectURL . '?error=invalid_state');
     die();
   }
 
   // Exchange the auth code for a token
-  $ch = curl_init($tokenURL);
+  $ch = curl_init($tokenEndpoint);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
   curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
     'grant_type' => 'authorization_code',
     'client_id' => $googleClientID,
     'client_secret' => $googleClientSecret,
-    'redirect_uri' => $baseURL,
+    'redirect_uri' => $redirectURL,
     'code' => $_GET['code']
   ]));
   $response = curl_exec($ch);
@@ -86,7 +88,7 @@ if(isset($_GET['code'])) {
   $_SESSION['id_token'] = $data['id_token'];
   $_SESSION['userinfo'] = $userinfo;
 
-  header('Location: ' . $baseURL);
+  header('Location: ' . $redirectURL);
   die();
 }
 
